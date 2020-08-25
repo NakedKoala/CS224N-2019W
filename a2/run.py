@@ -39,7 +39,7 @@ wordVectors = np.concatenate(
     axis=0)
 wordVectors = sgd(
     lambda vec: word2vec_sgd_wrapper(skipgram, tokens, vec, dataset, C,
-        negSamplingLossAndGradient),
+        naiveSoftmaxLossAndGradient),
     wordVectors, 0.3, 40000, None, True, PRINT_EVERY=10)
 # Note that normalization is not called here. This is not a bug,
 # normalizing during training loses the notion of length.
@@ -73,3 +73,7 @@ plt.xlim((np.min(coord[:,0]), np.max(coord[:,0])))
 plt.ylim((np.min(coord[:,1]), np.max(coord[:,1])))
 
 plt.savefig('word_vectors.png')
+
+
+
+# 1.08 pm
