@@ -38,6 +38,7 @@ class NMT(nn.Module):
         """
         super(NMT, self).__init__()
         self.model_embeddings = ModelEmbeddings(embed_size, vocab)
+        self.embded_size = embed_size
         self.hidden_size = hidden_size
         self.dropout_rate = dropout_rate
         self.vocab = vocab
@@ -77,8 +78,16 @@ class NMT(nn.Module):
         ###     Dropout Layer:
         ###         https://pytorch.org/docs/stable/nn.html#torch.nn.Dropout
 
+        self.encoder = nn.LSTM(input_size = embed_size, hidden_size = hidden_size, num_layers = 1,
+                               bias = True, dropout = dropout_rate, bidirectional = True)
+        self.decoder = nn.LSTMCell(input_size = embed_size + hidden_size, hidden_size = hidden_size, bias =True)
 
-
+        self.h_projection = nn.Linear(in_features = hidden_size * 2, out_features = hidden_size, bias = False)
+        self.c_projection = nn.Linear(in_features = hidden_size * 2, out_features = hidden_size, bias = False)
+        self.att_projection = nn.Linear(in_features = hidden_size * 2, out_features = hidden_size, bias = False)
+        self.combined_output_projection = nn.Linear(in_features = hidden_size * 3, out_features = hidden_size, bias = False)
+        self.target_vocab_projection = nn.Linear(in_features = hidden_size, out_features = len(vocab.tgt), bias = False)
+        self.dropout = nn.Dropout(p = dropout_rate)
         ### END YOUR CODE
 
 
@@ -167,10 +176,34 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.cat
         ###     Tensor Permute:
         ###         https://pytorch.org/docs/stable/tensors.html#torch.Tensor.permute
+        src_len, b = source_padded.shape[0], source_padded.shape[1]
+        
+        #(seq, b) -> (src_len, b, self.embded_size)
+        # import pdb 
+        # pdb.set_trace()
+        # why doesn't reshape work here
+        X = self.model_embeddings.source(source_padded.reshape(-1)).reshape(src_len, b, -1)
+        # assert(X.shape ==  (src_len, b, self.embded_size))
+        #Q: Why pack padded sequence ?
+        #A: Optimize computation. Ignore the padding ? 
+        #https://stackoverflow.com/questions/51030782/why-do-we-pack-the-sequences-in-pytorch#:~:text=Instead%2C%20pytorch%20allows%20us%20to,batch%20size%20at%20each%20step.
+        enc_hiddens, (last_hidden, last_cell) = self.encoder(nn.utils.rnn.pack_padded_sequence(X, source_lengths, batch_first=False, enforce_sorted=False))
+        enc_hiddens, _ = nn.utils.rnn.pad_packed_sequence(enc_hiddens, batch_first=True)
+        # assert(last_hidden.shape == (2, b, self.hidden_size) )
+        # assert(last_cell.shape == (2, b, self.hidden_size) )
+        # assert(enc_hiddens.shape == ( b, src_len, self.hidden_size*2))
 
+        last_hidden = torch.cat((last_hidden[0], last_hidden[1]), 1)
+        # assert(last_hidden.shape == (b, 2*self.hidden_size))
+        init_decoder_hidden = self.h_projection(last_hidden)
+        # assert(init_decoder_hidden.shape == (b, self.hidden_size))
 
+        last_cell = torch.cat((last_cell[0], last_cell[1]), 1)
+        # assert(last_cell.shape == (b, 2*self.hidden_size))
+        init_decoder_cell= self.h_projection(last_cell)
+        # assert(init_decoder_cell.shape == (b, self.hidden_size))
 
-
+        dec_init_state = (init_decoder_hidden, init_decoder_cell)
         ### END YOUR CODE
 
         return enc_hiddens, dec_init_state
@@ -193,6 +226,7 @@ class NMT(nn.Module):
         """
         # Chop of the <END> token for max length sentences.
         target_padded = target_padded[:-1]
+        # ?? WHY
 
         # Initialize the decoder state (hidden and cell)
         dec_state = dec_init_state
@@ -240,11 +274,27 @@ class NMT(nn.Module):
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/torch.html#torch.stack
 
+        b, src_len = enc_hiddens.shape[0], enc_hiddens.shape[1]
+        tgt_len = target_padded.shape[0]
 
+        enc_hiddens_proj = self.att_projection(enc_hiddens)
+        # assert(enc_hiddens_proj.shape ==  (b, src_len, self.hidden_size))
 
+        Y = self.model_embeddings.target(target_padded.reshape(-1)).reshape(tgt_len, b, -1)
+        # assert(Y.shape == (tgt_len, b, self.embded_size))
 
+        for Y_t in torch.split(Y, 1):
+            Y_t = torch.squeeze(Y_t, dim=0)
+            # assert(Y_t.shape == (b, self.embded_size))
+            Ybar_t = torch.cat([Y_t, o_prev], dim = -1)
+            # assert(Ybar_t.shape == (b, self.hidden_size + self.embded_size))
 
-
+            dec_state, combined_output, e_t = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
+            combined_outputs.append(combined_output)
+            o_prev = combined_output
+        combined_outputs = torch.stack(combined_outputs, dim=0)
+        # assert(combined_outputs.shape == (tgt_len, b, self.hidden_size))
+        
         ### END YOUR CODE
 
         return combined_outputs
@@ -302,7 +352,17 @@ class NMT(nn.Module):
         ###     Tensor Squeeze:
         ###         https://pytorch.org/docs/stable/torch.html#torch.squeeze
 
-
+        b, src_len = enc_hiddens_proj.shape[0], enc_hiddens_proj.shape[1]
+        # import pdb
+        # pdb.set_trace()
+        dec_state = self.decoder(Ybar_t, dec_state)
+        dec_hidden, dec_cell = dec_state
+        # input = (b, n, m) = (b, src_len, h)
+        # mat2 = (b, m, p ) = (b, h, 1) unsqueeze()
+        # output = (b, n, p )     = (b, src_len)   squeeze()
+        # torch.bmm()
+        e_t = torch.squeeze(torch.bmm(input=enc_hiddens_proj, mat2=torch.unsqueeze(dec_hidden, dim=-1)), dim=-1)
+        # assert(e_t.shape == (b, src_len))
         ### END YOUR CODE
 
         # Set e_t to -inf where enc_masks has 1
@@ -335,7 +395,22 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.cat
         ###     Tanh:
         ###         https://pytorch.org/docs/stable/torch.html#torch.tanh
-
+      
+        alpha_t = nn.functional.softmax(e_t, dim=1)
+       
+        ####        - alpha_t is shape (b, src_len)
+        ###           - enc_hiddens is shape (b, src_len, 2h)
+        ###           - a_t should be shape (b, 2h)
+         # input = (b, n, m) = (b, 1, src_len)
+         # mat2 = (b, m, p) = (b, src_len, 2h)  
+         # out = (b, n, p) = (b, 1, 2h)
+        a_t = torch.squeeze(torch.bmm(input=torch.unsqueeze(alpha_t, dim=1), mat2 = enc_hiddens), dim=1)
+        # assert(a_t.shape == (b, 2 * self.hidden_size))
+        U_t = torch.cat([a_t, dec_hidden], dim = 1)
+        # assert(U_t.shape == (b, 3 * self.hidden_size))
+        V_t = self.combined_output_projection(U_t)
+        O_t =  torch.tanh(self.dropout(V_t))
+        # assert(O_t.shape == (b, self.hidden_size))
 
         ### END YOUR CODE
 
