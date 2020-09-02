@@ -144,3 +144,6 @@ cython_debug/
 *.npy
 *.pickle
 *.json
+*.bin 
+*.txt
+*.optim
