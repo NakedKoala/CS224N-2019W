@@ -9,7 +9,7 @@ Sahil Chopra <schopra8@stanford.edu>
 Anand Dhoot <anandd@stanford.edu>
 Michael Hahn <mhahn2@stanford.edu>
 """
-
+import torch
 import torch.nn as nn
 
 # Do not change these imports; your module names should be
@@ -39,7 +39,16 @@ class ModelEmbeddings(nn.Module):
         super(ModelEmbeddings, self).__init__()
 
         ### YOUR CODE HERE for part 1h
+        self.vocab = vocab 
+        self.word_embed_size = word_embed_size
+        self.char_embed_size = 50 
+        self.char_embeddings = nn.Embedding(num_embeddings=len(self.vocab.char2id), 
+                                             embedding_dim=self.char_embed_size,
+                                             padding_idx=self.vocab.char2id['<pad>'])
 
+        self.cnn = CNN(embed_size=self.char_embed_size, num_filter=self.word_embed_size,
+                       kernel_size=5, padding=1)
+        self.highway = Highway(embed_size=self.word_embed_size, dropout_rate=0.3)
         ### END YOUR CODE
 
     def forward(self, input):
@@ -52,6 +61,16 @@ class ModelEmbeddings(nn.Module):
             CNN-based embeddings for each word of the sentences in the batch
         """
         ### YOUR CODE HERE for part 1h
-
+        sentence_length, batch_size, max_word_length = input.shape
+        # import pdb 
+        # pdb.set_trace()
+        x_word_emb = self.char_embeddings(input.reshape(-1)).reshape(sentence_length, batch_size, max_word_length, self.char_embed_size)
+        x_reshape = torch.transpose(x_word_emb, dim0=-2, dim1=-1)
+        # assert(x_reshape.shape == (sentence_length, batch_size, self.char_embed_size, max_word_length))
+        x_conv_out = self.cnn(x_reshape.reshape(-1, self.char_embed_size, max_word_length))
+        # assert(x_conv_out.shape[1] == self.word_embed_size)
+        x_word_emb = self.highway(x_conv_out).reshape(sentence_length, batch_size, self.word_embed_size)
+        # potentially ambiguous reshape that makes the output totally wrong
+        return x_word_emb
         ### END YOUR CODE
 

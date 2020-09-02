@@ -63,13 +63,16 @@ def pad_sents(sents, pad_token):
     """
     sents_padded = []
 
-    ### COPY OVER YOUR CODE FROM ASSIGNMENT 4
+    ### YOUR CODE HERE (~6 Lines)
+    max_len = 0
+    for sent in sents:
+        max_len = max(max_len, len(sent))
+    sents_padded = [ sent + [pad_token] * (max_len - len(sent)) for sent in sents]
+    # assert(len(sents_padded[0]) == max_len)
 
-    ### END YOUR CODE FROM ASSIGNMENT 4
+    ### END YOUR CODE
 
     return sents_padded
-
-
 
 def read_corpus(file_path, source):
     """ Read file, where each sentence is dilineated by a `\n`.
