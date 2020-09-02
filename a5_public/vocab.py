@@ -162,7 +162,7 @@ class VocabEntry(object):
         ###         https://pytorch.org/docs/stable/tensors.html#torch.Tensor.view
         
 
-        sents_pad = torch.transpose(torch.Tensor(pad_sents_char(self.words2charindices(sents),  char_pad_token=0)), dim0=0, dim1=1)
+        sents_pad = torch.transpose(torch.Tensor(pad_sents_char(self.words2charindices(sents),  char_pad_token=0),device=device), dim0=0, dim1=1)
         sents_pad = sents_pad.long()
         return sents_pad
 
